@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>テキスト分割・統合ツール</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin-bottom: 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .file-input-group {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .file-input-group label {
+            margin: 0;
+            font-weight: normal;
+        }
+
+        .file-input-group input[type="file"] {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .file-input-group input[type="number"] {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 80px;
+        }
+
+        .lines-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .line {
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .line-image-scroll {
+            overflow-x: auto;
+            overflow-y: hidden;
+            margin-top: 5px;
+            padding: 5px 0;
+        }
+
+        /* スクロールバーのスタイル（太くする） */
+        .line-image-scroll::-webkit-scrollbar {
+            height: 18px;
+        }
+
+        .line-image-scroll::-webkit-scrollbar-track {
+            background: #e8e8e8;
+            border-radius: 10px;
+        }
+
+        .line-image-scroll::-webkit-scrollbar-thumb {
+            background: #4CAF50;
+            border-radius: 10px;
+        }
+
+        .line-image-scroll::-webkit-scrollbar-thumb:hover {
+            background: #45a049;
+        }
+
+        .line input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+            font-family: monospace;
+        }
+
+        .line canvas {
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            display: block;
+            flex-shrink: 0;
+        }
+
+        .line-number {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 8px;
+        }
+
+        #resultSection {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>テキスト分割・統合ツール</h1>
+
+    <div class="file-input-group">
+        <label for="imageInput">画像ファイルをアップロード:</label>
+        <input type="file" id="imageInput" accept="image/*">
+        <label for="scaleInput">表示倍率:</label>
+        <input type="number" id="scaleInput" value="1" min="0.1" step="0.1">
+    </div>
+
+    <h2>元のテキスト</h2>
+    <textarea name="origin" id="originText" placeholder="複数行のテキストを入力してください..."></textarea>
+
+    <button id="splitBtn">分割</button>
+
+    <div class="lines-container" id="linesContainer"></div>
+
+    <button id="mergeBtn">統合</button>
+
+    <div id="resultSection">
+        <h2>結果</h2>
+        <textarea name="result" id="resultText" readonly placeholder="Mergeボタンを押すと結果がここに表示されます..."></textarea>
+    </div>
+
+    <script>
+        const LINES_COUNT = 25;
+        const LINE_HEIGHT = 125.625;
+        const FIRST_LINE_TOP = 220;
+        const FIRST_LINE_BOTTOM = 345;
+
+        let uploadedImage = null;
+        let scale = 1;
+
+        // 最適なスケールを計算する関数
+        function calculateOptimalScale() {
+            if (!uploadedImage) return 1;
+            
+            // .line-image-scroll のコンテナ幅を取得
+            const container = document.querySelector('.line-image-scroll');
+            if (!container) return 1;
+            
+            const containerWidth = container.clientWidth;
+            if (containerWidth === 0) return 1;
+            
+            // 画像の幅（スケールなし）
+            const baseWidth = uploadedImage.width;
+            
+            // スケール計算（95%で余裕を持たせる）
+            const optimalScale = (containerWidth / baseWidth) * 0.95;
+            
+            return Math.max(optimalScale, 0.1);
+        }
+
+        // 画像のアップロード処理
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = new Image();
+                    img.onload = function() {
+                        uploadedImage = img;
+                        // 自動スケーリング計算と適用
+                        scale = calculateOptimalScale();
+                        document.getElementById('scaleInput').value = scale.toFixed(2);
+                        updateAllCanvases();
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 倍率変更処理
+        document.getElementById('scaleInput').addEventListener('input', function(e) {
+            scale = parseFloat(e.target.value) || 1;
+            updateAllCanvases();
+        });
+
+        // ウィンドウリサイズ時に自動調整
+        window.addEventListener('resize', function() {
+            if (uploadedImage) {
+                scale = calculateOptimalScale();
+                document.getElementById('scaleInput').value = scale.toFixed(2);
+                updateAllCanvases();
+            }
+        });
+
+        // div.lineを初期化
+        function initializeLines() {
+            const container = document.getElementById('linesContainer');
+            container.innerHTML = '';
+
+            for (let i = 1; i <= LINES_COUNT; i++) {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'line';
+
+                const lineNumber = document.createElement('div');
+                lineNumber.className = 'line-number';
+                lineNumber.textContent = `行 ${i}`;
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.dataset.lineIndex = i - 1;
+                input.placeholder = `行 ${i}`;
+
+                const imageScrollContainer = document.createElement('div');
+                imageScrollContainer.className = 'line-image-scroll';
+
+                const canvas = document.createElement('canvas');
+                canvas.dataset.lineIndex = i - 1;
+
+                imageScrollContainer.appendChild(canvas);
+
+                lineDiv.appendChild(lineNumber);
+                lineDiv.appendChild(input);
+                lineDiv.appendChild(imageScrollContainer);
+                container.appendChild(lineDiv);
+            }
+        }
+
+        // キャンバスに画像を描画
+        function updateAllCanvases() {
+            if (!uploadedImage) return;
+
+            for (let i = 0; i < LINES_COUNT; i++) {
+                const canvas = document.querySelector(`canvas[data-line-index="${i}"]`);
+                if (canvas) {
+                    drawImageOnCanvas(canvas, i);
+                }
+            }
+        }
+
+        function drawImageOnCanvas(canvas, lineIndex) {
+            const ctx = canvas.getContext('2d');
+            
+            // 座標計算
+            const topPixel = FIRST_LINE_TOP + lineIndex * LINE_HEIGHT;
+            const bottomPixel = FIRST_LINE_BOTTOM + lineIndex * LINE_HEIGHT;
+            const cropHeight = bottomPixel - topPixel;
+            const cropWidth = uploadedImage.width;  // 左右はtrimしない
+
+            // キャンバスサイズをスケール倍率で設定（アスペクト比保持）
+            canvas.width = cropWidth * scale;
+            canvas.height = cropHeight * scale;
+
+            // キャンバスをクリア
+            ctx.fillStyle = '#f9f9f9';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 画像を描画
+            ctx.drawImage(
+                uploadedImage,
+                0, topPixel,                    // ソース開始位置 (x, y)
+                cropWidth, cropHeight,          // ソースサイズ (w, h)
+                0, 0,                           // ターゲット開始位置 (x, y)
+                canvas.width, canvas.height     // ターゲットサイズ (w, h) - スケール済み
+            );
+        }
+
+        // Split処理
+        document.getElementById('splitBtn').addEventListener('click', function() {
+            const originText = document.getElementById('originText').value;
+            const lines = originText.split('\n');
+
+            for (let i = 0; i < LINES_COUNT; i++) {
+                const input = document.querySelector(`input[data-line-index="${i}"]`);
+                input.value = lines[i] || '';
+            }
+        });
+
+        // Merge処理
+        document.getElementById('mergeBtn').addEventListener('click', function() {
+            const inputs = document.querySelectorAll('input[data-line-index]');
+            const results = [];
+
+            inputs.forEach(input => {
+                results.push(input.value);
+            });
+
+            // 行を連結する処理
+            const merged = [];
+            let i = 0;
+            while (i < results.length) {
+                let currentLine = results[i];
+                
+                // 次の行が存在する限り連結を試みる
+                while (i < results.length - 1 && currentLine.length >= 19) {
+                    const nextLine = results[i + 1];
+                    // 次の行の行頭が空白（半角・全角）以外かチェック
+                    if (nextLine && nextLine.length > 0 && nextLine[0] !== ' ' && nextLine[0] !== '\u3000') {
+                        // 行を連結
+                        currentLine = currentLine + nextLine;
+                        i++; // 次の行を消費
+                    } else {
+                        // 連結できない場合は内側のループを抜ける
+                        break;
+                    }
+                }
+                
+                merged.push(currentLine);
+                i++;
+            }
+
+            document.getElementById('resultText').value = merged.join('\n');
+        });
+
+        // 初期化
+        initializeLines();
+    </script>
+</body>
+</html>
